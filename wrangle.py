@@ -69,8 +69,49 @@ def clean_data(df):
                     'color_out':'color'
                   }, inplace=True)
     
+    # remove negative age
+    df = df[df.date_of_birth < df.datetime_in] # 250 rows
+    # birthday = same day as check in
+    df = df[(df.datetime_in - df.date_of_birth).dt.days > 1]
+    
     # re-order columns
     new_col_order = ['animal_id', 'animal_type', 'sex', 'age', 'breed', 'color', 'name', 'date_of_birth', 'datetime_in', 'datetime_out', 
                  'intake_type', 'intake_condition', 'outcome_type', 'outcome_subtype']
     return df[new_col_order]
 
+def handle_duplicates(df):
+    '''
+    this function accepts a dataframe of animal shelter as a parameter
+    ----
+    some animals check-in and check-out in the shelter many times up to 1088 times
+    this might have few reasons:
+    a) an animal didn't fit a family and was returned
+    b) animal escaped the owner and was returned to the owner
+    c) animal was 'rented' for a weekend or for a walk
+    
+    those rows create 'noise'. I remove all rows where the animal stayed less than 2 days.
+    
+    for other duplicated id's I count how many times the animal `checked in` in the shelter
+    and create a new column 'times_in_shelter'
+    '''
+    # leave only animals that stay > 1 day (other entries are showing walks with animal)
+    df = df[(df.datetime_out - df.datetime_in).dt.days > 1] # 59295 rows
+    
+    # create a dataframe that holds duplicated values
+    df_with_duplicates = df[df['animal_id'].duplicated()].copy()
+    # create a dataframe with unique values only
+    df_no_duplicates = df[~df['animal_id'].duplicated()].copy()
+    
+    # create a dictionry that holds how many times the animal stayed in the shelter
+    # +1 because the same id is available in df_no_duplicates
+    times_dict = (df_with_duplicates.animal_id.value_counts() + 1).to_dict()
+    # creat a columns to hold number of times the animal went to the shelter
+    df_no_duplicates['times_in_shelter'] = 0
+    # map the values from the times_dict
+    df_no_duplicates.times_in_shelter = df.animal_id.map(times_dict)
+    # replace null values with 1 
+    # (null means -> the animal doesn't have duplicate rows -> went to the shelter only once)
+    # change the data type to int
+    df_no_duplicates.times_in_shelter = df_no_duplicates.times_in_shelter.fillna(1).astype(int)
+    
+    return df_no_duplicates
