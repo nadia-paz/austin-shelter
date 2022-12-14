@@ -1,4 +1,6 @@
 import pandas as pd
+import numpy as np
+from sklearn.model_selection import train_test_split
 
 '''
 DATASETS downloaded on December 12, 2022 
@@ -9,6 +11,8 @@ https://data.austintexas.gov/Health-and-Community-Services/Austin-Animal-Center-
 https://data.austintexas.gov/Health-and-Community-Services/Austin-Animal-Center-Outcomes/9t4d-g238
 
 '''
+seed = 2912
+target = 'outcome_type'
 
 def acquire():
     '''
@@ -71,8 +75,8 @@ def clean_data(df):
     
     # remove negative age
     df = df[df.date_of_birth < df.datetime_in] # 250 rows
-    # birthday = same day as check in
-    df = df[(df.datetime_in - df.date_of_birth).dt.days > 1]
+    # birthday = same day as check in. do not remove!!! where born in the shelter or right before found on the street
+    # df = df[(df.datetime_in - df.date_of_birth).dt.days > 1]
     
     # re-order columns
     new_col_order = ['animal_id', 'animal_type', 'sex', 'age', 'breed', 'color', 'name', 'date_of_birth', 'datetime_in', 'datetime_out', 
@@ -113,5 +117,189 @@ def handle_duplicates(df):
     # (null means -> the animal doesn't have duplicate rows -> went to the shelter only once)
     # change the data type to int
     df_no_duplicates.times_in_shelter = df_no_duplicates.times_in_shelter.fillna(1).astype(int)
+
+    ############### PICK THE MINIMUM CHECK IN DATE ######################
+    # 6197 rows changed
+    # min datetime_in values from the df_no_duplicates
+    min_no_dupl = df_no_duplicates.groupby('animal_id').datetime_in.min()
+
+    # min datetime_in values from the df_with_duplicates
+    min_with_dupl = df_with_duplicates.groupby('animal_id').datetime_in.min()
+
+    # concatenate series into data frame
+    min_timeframe = pd.concat([min_no_dupl, min_with_dupl], axis = 1).copy()
+
+    # drop null values (the ids that are not in both series)
+    min_timeframe.dropna(inplace=True)
+
+    # rename columns
+    min_timeframe.columns = ['no_dupl', 'with_dupl']
+
+    # compare dates
+    min_timeframe['no_smaller'] = min_timeframe.no_dupl <= min_timeframe.with_dupl
+
+    # create a new column that takes the smallest value
+    min_timeframe['final_date_in'] = \
+        np.where(min_timeframe.no_smaller, min_timeframe.no_dupl, min_timeframe.with_dupl)
+
+    # drop unneeded columns
+    min_timeframe.drop(columns=['no_dupl', 'with_dupl', 'no_smaller'], inplace=True)
+
+    # convert into Series and then into a dictionary
+    min_timeframe = min_timeframe.squeeze().to_dict()
+
+    # create a column first_check_in that holds the minimum check-in date
+    df_no_duplicates['first_check_in'] = np.nan
+    df_no_duplicates.first_check_in = df.animal_id.map(min_timeframe)
+    df_no_duplicates.first_check_in = df_no_duplicates.first_check_in.fillna(df_no_duplicates.datetime_in)
+
+    ############### PICK THE MAXIMUM CHECK OUT DATE ######################
+    # 6451 rows changed
+    # max datetime_in values from the df_no_duplicates
+    max_no_dupl = df_no_duplicates.groupby('animal_id').datetime_out.max()
+
+    # max datetime_in values from the df_with_duplicates
+    max_with_dupl = df_with_duplicates.groupby('animal_id').datetime_out.max()
+
+    # concatenate series into data frame
+    max_timeframe = pd.concat([max_no_dupl, max_with_dupl], axis = 1).copy()
+
+    # drop null values (the ids that are not in both series)
+    max_timeframe.dropna(inplace=True)
+
+    # rename columns
+    max_timeframe.columns = ['no_dupl', 'with_dupl']
+
+    # compare dates
+    max_timeframe['no_smaller'] = max_timeframe.no_dupl <= max_timeframe.with_dupl
+
+    # create a new column that takes the biggest value
+    max_timeframe['final_date_out'] = \
+        np.where(max_timeframe.no_smaller, max_timeframe.with_dupl, max_timeframe.no_dupl)
+
+    # drop unneeded columns
+    max_timeframe.drop(columns=['no_dupl', 'with_dupl', 'no_smaller'], inplace=True)
+
+    # convert into Series and then into a dictionary
+    max_timeframe = max_timeframe.squeeze().to_dict()
+
+    # create a column last_check_out that holds the maximum check-out date
+    df_no_duplicates['last_check_out'] = np.nan
+    df_no_duplicates.last_check_out = df.animal_id.map(max_timeframe)
+    df_no_duplicates.last_check_out = df_no_duplicates.last_check_out.fillna(df_no_duplicates.datetime_out)
+
+    # drop 'datetime_in', 'datetime_out' columns
+    df_no_duplicates.drop(columns=['datetime_in', 'datetime_out'], inplace=True)
     
     return df_no_duplicates
+
+def add_features(df):
+    '''
+    the function takes a dataframe of animal shelter as a parameter
+    adds more features for the exploration
+    
+    '''
+    # spayed, neutered, intact, unknown
+    df['sterilized'] = df.sex.str.split(' ', expand=True).iloc[:, 0]
+    # male, female, unknown
+    df['sex_of_animal'] = df.sex.str.split(' ', expand=True).iloc[:, 1]
+    # fill nulls with unknown
+    df.sex_of_animal = df.sex_of_animal.fillna('Unknown')
+    # fill nulls with unknown
+    df.sterilized = df.sterilized.fillna('Unknown')
+    # calculate age in days
+    df['age_in_days'] = (df.last_check_out - df.date_of_birth).dt.days
+    # calculate age in months
+    df['age_in_months'] = (df.age_in_days / 30).astype(int)
+    # calculate age in years
+    df['age_in_years'] = (df.age_in_days / 365).astype(int)
+    # if the animal is not cat/dog -> remove ' Mix' in the end
+    df.breed = np.where(((df.animal_type == 'Other') & df.breed.str.contains(' Mix')), \
+                    df.breed.str.strip(' Mix'), df.breed )
+    # dummy if the breed is mixed
+    df['mixed_breed'] = np.where((df.breed.str.contains(' Mix') | (df.breed.str.contains('/'))), 1, 0 )
+    # dummy for domestic breeds
+    df['domestic_breed'] = np.where(df.breed.str.contains('Domestic'), 1, 0)
+    # how many days in shelter the animal have spent before the final outcome
+    df['days_at_shelter'] = (df.last_check_out - df.first_check_in).dt.days
+    # replace animal_type with the breed name if the type is 'Other'
+    df.animal_type = np.where(df.animal_type == 'Other', df.breed, df.animal_type)
+    # create a dictionary that holds all bunnies breeds
+    bunnie_cond = df.animal_type.str.contains('Rabbit') | \
+            df.animal_type.str.contains('Dutch') | \
+            df.animal_type.str.contains('Lop') | \
+            df.animal_type.str.contains('Rex') | \
+            df.animal_type.str.contains('Hare') | \
+            df.animal_type.str.contains('Flemish') | \
+            df.animal_type.str.contains('Dwarf') | \
+            df.animal_type.str.contains('Angora-') | \
+            df.animal_type.str.contains('Hotot')
+    df.animal_type = np.where(bunnie_cond, 'Rabbit', df.animal_type)
+    bunnies = {'Jersey Wooly':'Rabbit', 'Silver':'Rabbit', 'Californian':'Rabbit',\
+          'New Zealand Wht':'Rabbit', 'Checkered Giant':'Rabbit', 'American Sable':'Rabbit', 'Polish':'Rabbit',\
+          'Beveren':'Rabbit', 'Lionhead':'Rabbit', 'American':'Rabbit', 'Himalayan':'Rabbit',\
+           'Cottontail':'Rabbit', 'Rhinelander':'Rabbit', 'Harlequin':'Rabbit', 'English Spot':'Rabbit', 'Havana':'Rabbit',\
+           'Britannia Petit':'Rabbit'
+          }
+    # replace all bunnies breeds with Rabbit
+    df.animal_type = df.animal_type.replace(bunnies)
+    # put unknown to all animals that are not cats or dogs
+    df.breed = np.where(((df.animal_type == 'Cat') | (df.animal_type == 'Dog')), df.breed, 'Unknown')
+    # keep only some animals, the rest is Wild
+    animals_cond = (df.animal_type == 'Dog') | \
+                (df.animal_type == 'Cat') | \
+                (df.animal_type == 'Rabbit') | \
+                (df.animal_type == 'Bird') | \
+                (df.animal_type == 'Guinea Pig') | \
+                (df.animal_type == 'Livestock')
+    df.animal_type = np.where(animals_cond, df.animal_type, 'Wild')
+
+    
+    # remove age column
+    df.drop(columns='age', inplace=True)
+    
+    return df
+
+def drop_values(df):
+    # drop null from the target -> 10 rows
+    df = df[~df.outcome_type.isnull()].copy()
+    # drop rare outcomes < 300 rows
+    df = df[~((df.outcome_type == 'Lost') | (df.outcome_type == 'Stolen') | (df.outcome_type =='Disposal') \
+        | (df.outcome_type == 'Missing'))].copy()
+    # drop those who are in the shelter > 20 times
+    df = df[df.times_in_shelter <= 20].copy() # 7- rows
+
+    cond_transfer = (df.outcome_type == 'Transfer') | (df.outcome_type == 'Relocate')
+    cond_adopt = (df.outcome_type == 'Adotion') | (df.outcome_type == 'Return to Owner') | \
+            ((df.outcome_type == 'Rto-Adopt'))
+    df.outcome_type = np.where(cond_transfer, 'Transfer', df.outcome_type)
+    df.outcome_type = np.where(cond_adopt, 'Adoption', df.outcome_type)
+
+    return df
+
+######### RUN ALL FUNCTIONS ##################
+def get_shelter_data():
+    '''
+    the function runs all functions above and returns a data set ready for split and exploration
+    '''
+    df = acquire()
+    df = clean_data(df)
+    df = handle_duplicates(df)
+    df = add_features(df)
+    df = drop_values(df)
+    return df
+
+########### SPLIT BEFORE THE EXPLORATION ########
+def split_data(df):
+    '''
+    This function takes in a dataframe and splits it into 3 data sets
+    Test is 20% of the original dataset, validate is .30*.80= 24% of the 
+    original dataset, and train is .70*.80= 56% of the original dataset. 
+    The function returns, in this order, train, validate and test dataframes. 
+    '''
+    #split_db class verision with random seed
+    train_validate, test = train_test_split(df, test_size=0.2, 
+                                            random_state=seed, stratify=df[target])
+    train, validate = train_test_split(train_validate, test_size=0.3, 
+                                       random_state=seed, stratify=train_validate[target])
+    return train, validate, test
