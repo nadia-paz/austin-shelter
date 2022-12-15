@@ -159,7 +159,7 @@ def gen_random_forest(intake=True):
             score = round(model.score(X_train[features_dict[key]], y_train), 3)
             validate = round(model.score(X_validate[features_dict[key]], y_validate), 3)
             #save the information about the model and it's score to a dictionary
-            scores_rf.loc[len(scores_rf.index)] = ['Random', features_names[key], i, score, validate]
+            scores_rf.loc[len(scores_rf.index)] = ['Random Forest', features_names[key], i, score, validate]
             
             col_name = 'RF_'  + str(i) + '_' + features_names[key]
             # save predictions
@@ -221,7 +221,7 @@ def best_results_intake():
     best_intake = pd.concat([best_intake, gen_random_forest()], axis=0)
     best_intake = pd.concat([best_intake, gen_logistic_regression()], axis=0)
     best_intake['diff'] = round(best_intake.train_score - best_intake.validate_score, 4)
-    return best_intake.sort_values(by=['validate_score', 'diff'], ascending=[False, True]).head(1)
+    return best_intake.sort_values(by=['validate_score', 'diff'], ascending=[False, True]).head(3)
 
 def best_results_whole():
     '''
@@ -233,7 +233,7 @@ def best_results_whole():
     best_whole = pd.concat([best_whole, gen_random_forest(intake=False)], axis=0)
     best_whole = pd.concat([best_whole, gen_logistic_regression(intake=False)], axis=0)
     best_whole['diff'] = round(best_whole.train_score - best_whole.validate_score,4)
-    return best_whole.sort_values(by=['validate_score', 'diff'], ascending=[False, True]).head(1)
+    return best_whole.sort_values(by=['validate_score', 'diff'], ascending=[False, True]).head(3)
 
 def run_best_model():
     '''
