@@ -1,6 +1,10 @@
+import os
+# DS libraries
 import pandas as pd
 import numpy as np
 from sklearn.model_selection import train_test_split
+
+from sklearn.preprocessing import QuantileTransformer
 
 '''
 DATASETS downloaded on December 12, 2022 
@@ -13,6 +17,12 @@ https://data.austintexas.gov/Health-and-Community-Services/Austin-Animal-Center-
 '''
 seed = 2912
 target = 'outcome_type'
+# re-arrange columns
+new_order = ['animal_id', 'animal_type', 'sex', 'breed', 'color', 'name',
+    'intake_type', 'intake_condition', 'first_check_in',
+'last_check_out', 'times_in_shelter',  'sterilized', 'sex_of_animal', 'date_of_birth', 'age_on_check_in', 'age_in_days',
+'age_in_months', 'age_in_years', 'days_at_shelter', 'mixed_breed', 'domestic_breed', 'pitbull',
+ 'outcome_type', 'outcome_subtype']
 
 def acquire():
     '''
@@ -20,13 +30,18 @@ def acquire():
     with the intake and outcome information from Austin Animal shelter
     the function merges those 2 files into 1 dataframe and returns it
     '''
+
+    
+    # if *.csv file is not available locally, acquire data from SQL database
+    # and write it as *.csv for future use
+    
     # read intake information 
     intake = pd.read_csv('Austin_Animal_Center_Intakes.csv')
     
     # read outcome information
     outcome = pd.read_csv('Austin_Animal_Center_Outcomes.csv')
     
-    # merge tables, to 
+    # merge tables
     df = intake.merge(outcome, how='inner', on='Animal ID', suffixes=('_in', '_out'))
     
     return df
@@ -213,6 +228,8 @@ def add_features(df):
     df['age_in_months'] = (df.age_in_days / 30).astype(int)
     # calculate age in years
     df['age_in_years'] = (df.age_in_days / 365).astype(int)
+    # age on check in
+    df['age_on_check_in']=(df.first_check_in - df.date_of_birth).dt.days
     # if the animal is not cat/dog -> remove ' Mix' in the end
     df.breed = np.where(((df.animal_type == 'Other') & df.breed.str.contains(' Mix')), \
                     df.breed.str.strip(' Mix'), df.breed )
@@ -220,6 +237,11 @@ def add_features(df):
     df['mixed_breed'] = np.where((df.breed.str.contains(' Mix') | (df.breed.str.contains('/'))), 1, 0 )
     # dummy for domestic breeds
     df['domestic_breed'] = np.where(df.breed.str.contains('Domestic'), 1, 0)
+    # dummy for Unknown breed
+    #df['unknown_breed'] = np.where(df.breed.str.contains('Unknown'), 1, 0)
+    # dummy for Pit Bull and Boxer
+    df['pitbull'] = np.where(df.breed == 'Pit Bull', 1, 0).astype('uint8')
+    #df['boxer'] = np.where(df.breed == 'Boxer', 1, 0).astype('uint8')
     # how many days in shelter the animal have spent before the final outcome
     df['days_at_shelter'] = (df.last_check_out - df.first_check_in).dt.days
     # replace animal_type with the breed name if the type is 'Other'
@@ -277,20 +299,85 @@ def drop_values(df):
 
     return df
 
+########### FUNCTION TO CHANGE DATA TYPES WHEN DATA PULLED FROM THE *CSV 
+def change_dtypes(df):
+    '''
+    the function accepts a cleaned dataframe of austin animal shelter
+    changes data types to category, datetime and uint8
+    rearranges columns and returns updated dataframe
+    '''
+    # change objects to category
+    to_categories = ['animal_type', 'sex', 'intake_type', 'intake_condition', 'outcome_type', 'outcome_subtype', \
+                  'sterilized', 'sex_of_animal']
+    for col in to_categories:
+            df[col] = pd.Categorical(df[col])
+    # change dates to datetime
+    to_date = ['date_of_birth', 'first_check_in', 'last_check_out']
+    for col in to_date:
+        df[col] = pd.to_datetime(df[col])
+    # change small numbers to uint8
+    to_uint8 = ['times_in_shelter', 'age_in_years', 'mixed_breed', 'domestic_breed', 'pitbull']
+    for col in to_uint8:
+        df[col] = df[col].astype('uint8')
+    
+    return df
+
 ######### RUN ALL FUNCTIONS ##################
 def get_shelter_data():
     '''
     the function runs all functions above and returns a data set ready for split and exploration
     '''
-    df = acquire()
-    df = clean_data(df)
-    df = handle_duplicates(df)
-    df = add_features(df)
-    df = drop_values(df)
+    filename = 'data/austin_animal_shelter.csv'
+    # if the clean file is available
+    if os.path.isfile(filename):
+        df = pd.read_csv(filename)
+        df = change_dtypes(df)
+    else:
+        df = acquire()
+        df = clean_data(df)
+        df = handle_duplicates(df)
+        df = add_features(df)
+        df = drop_values(df)
+        # save data to *csv file
+        df.to_csv(filename, index_label = False)
+
+    return df[new_order]
+
+########## CREATE DUMMIES #######################
+def dummies(df):
+    '''
+    the function accepts a dataframe as a parameter
+    drops the columns that don't go into modeling
+    creates dummies for categorical variables
+    returns a dataframe ready for the split before the modeling
+    '''
+    columns_to_drop = ['animal_id', 'breed', 'sex', 'color', 'name', \
+        'first_check_in', 'last_check_out','date_of_birth', 'age_in_months', 'age_in_years', 'outcome_subtype']
+    df.drop(columns = columns_to_drop, inplace=True)
+    
+    # create dummies for sterilized and sex_of_animal. Both have 'Unknown' in same rows
+    df.insert(0,'is_steril','')
+    df['is_steril'] = np.where((df.sterilized == 'Neutered') | (df.sterilized == 'Spayed'), 1, 0).astype('uint8')
+    df.insert(0,'intact','')
+    df['intact'] = np.where(df.sterilized == 'Intact', 1, 0).astype('uint8')
+    df.insert(0,'male','')
+    df['male'] = np.where(df.sex_of_animal == 'Male', 1, 0).astype('uint8')
+    df.insert(0,'female','')
+    df['female'] = np.where(df.sex_of_animal == 'Female', 1, 0).astype('uint8')
+    # unknows sex / sterilized is the same, it will get 00
+    df.drop(columns=['sex_of_animal', 'sterilized'], inplace=True)
+    
+    # create dummies for 
+    to_dummies = ['animal_type', 'intake_type','intake_condition']
+    df = pd.concat(\
+        [pd.get_dummies(df[to_dummies], drop_first=True), df], axis=1)
+    df.drop(columns=to_dummies, inplace=True)
+    
     return df
 
 ########### SPLIT BEFORE THE EXPLORATION ########
-def split_data(df):
+
+def split_3(df):
     '''
     This function takes in a dataframe and splits it into 3 data sets
     Test is 20% of the original dataset, validate is .30*.80= 24% of the 
@@ -302,4 +389,37 @@ def split_data(df):
                                             random_state=seed, stratify=df[target])
     train, validate = train_test_split(train_validate, test_size=0.3, 
                                        random_state=seed, stratify=train_validate[target])
+    return train, validate, test
+
+def split_data(df, explore=True):
+    '''
+    the function accepts a dataframe as a parameter
+    splits according to the purpose
+    for the exploration returns train, validate, test
+    for modeling it drops unneeded columns, creates dummis, and returns
+    6 values X_train, y_train ...
+    '''
+
+    if explore:
+        return split_3(df)
+    else:
+        df = dummies(df)
+        train, validate, test = split_3(df)
+        return train.iloc[:, :-1], validate.iloc[:, :-1], test.iloc[:, :-1], \
+            train[target], validate[target], test[target]
+
+def scale_quantile(train, validate, test):
+    '''
+    accepts train, validate, test data sets
+    scales the data in each of them
+    returns transformed data sets
+    '''
+    col = ['times_in_shelter', 'age_on_check_in', 'age_in_days', 'days_at_shelter']
+    # create a quantile transformer  
+    qt = QuantileTransformer(output_distribution='normal')
+    qt.fit(train[col])
+    train[col] = qt.transform(train[col])
+    validate[col] = qt.transform(validate[col])
+    test[col] = qt.transform(test[col])
+    
     return train, validate, test
