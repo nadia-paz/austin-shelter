@@ -26,12 +26,15 @@ Links for the source:
 
 - [Outcomes](https://data.austintexas.gov/Health-and-Community-Services/Austin-Animal-Center-Outcomes/9t4d-g238)
 
+
 You can also find a cleaned data set in ```austin_animal_shelter.csv``` file.
 
 
 ## Steps to Reproduce
 1) Clone this repo into your computer.
-4) Run the ```austin_animal_center.ipynb``` file.
+2) Run the ```austin_animal_center.ipynb``` file.
+In case you need to run updated files, download intakes and outcomes data sets from the links above and add them to the `data` repository.
+
 
 ## Project's pipeline
 
