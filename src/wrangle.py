@@ -36,10 +36,10 @@ def acquire():
     # and write it as *.csv for future use
     
     # read intake information 
-    intake = pd.read_csv('Austin_Animal_Center_Intakes.csv')
+    intake = pd.read_csv('data/Austin_Animal_Center_Intakes.csv')
     
     # read outcome information
-    outcome = pd.read_csv('Austin_Animal_Center_Outcomes.csv')
+    outcome = pd.read_csv('data/Austin_Animal_Center_Outcomes.csv')
     
     # merge tables
     df = intake.merge(outcome, how='inner', on='Animal ID', suffixes=('_in', '_out'))
